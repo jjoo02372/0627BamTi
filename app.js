@@ -59,6 +59,9 @@ const STUDENTS = [
   },
 ];
 
+// 학생 익명 호칭: Gemini 전송 시 사용 (이름·학번 대신)
+const STUDENT_ALIASES = STUDENTS.map((_, i) => "학생 " + String.fromCharCode(65 + i));
+
 const loginForm = document.querySelector("#loginForm");
 const userIdInput = document.querySelector("#userId");
 const passwordInput = document.querySelector("#password");
@@ -69,6 +72,9 @@ const studentView = document.querySelector("#studentView");
 const adminView = document.querySelector("#adminView");
 
 let currentUser = null;
+let selectedStudentForCounseling = null;
+// 이벤트 리스너를 한 번만 등록하기 위한 플래그
+let adminListenersAttached = false;
 
 loginForm.addEventListener("submit", (event) => {
   event.preventDefault();
@@ -98,6 +104,7 @@ loginForm.addEventListener("submit", (event) => {
 
 logoutButton.addEventListener("click", () => {
   currentUser = null;
+  selectedStudentForCounseling = null;
   showOnly(loginView);
   logoutButton.classList.add("hidden");
   userIdInput.focus();
@@ -138,7 +145,7 @@ function renderStudentPage(student) {
       </article>
 
       <div class="content-stack">
-        ${renderGrades(student.grades, false, `gradesTitle-${student.id}`)}
+        ${renderGrades(student.grades, false, "gradesTitle-" + student.id)}
         ${renderTraits(student)}
       </div>
     </div>
@@ -161,55 +168,265 @@ function renderAdminDashboard() {
     <section class="admin-grid" aria-label="전체 학생 정보">
       ${STUDENTS.map(renderStudentCard).join("")}
     </section>
+
+    <section class="counseling-panel" aria-labelledby="counselingPanelTitle">
+      <div class="counseling-panel-header">
+        <p class="eyebrow">AI Assistant</p>
+        <h3 id="counselingPanelTitle">AI 학생 상담 전략 도우미</h3>
+        <p class="counseling-panel-desc">학생 카드의 "상담 전략 요청" 버튼을 눌러 학생을 선택하세요.</p>
+      </div>
+
+      <div id="counselingEmpty" class="counseling-empty-msg">
+        <p>학생 카드에서 "상담 전략 요청" 버튼을 클릭하면 여기에 상담 전략 도우미가 표시됩니다.</p>
+      </div>
+
+      <div id="counselingContent" class="counseling-content hidden">
+        <div id="counselingStudentInfo" class="counseling-selected-info"></div>
+
+        <div class="counseling-form-group">
+          <label class="counseling-label" for="teacherConcern">교사 고민 입력</label>
+          <textarea
+            id="teacherConcern"
+            class="counseling-textarea"
+            rows="4"
+            placeholder="수업 참여는 좋은데 평가 결과가 낮습니다. 어떻게 상담하면 좋을까요?"
+          ></textarea>
+        </div>
+
+        <div class="counseling-form-group">
+          <p class="counseling-preview-label">전송 데이터 미리보기 <span class="counseling-preview-note">(이름·학번·사진 경로 제외)</span></p>
+          <pre id="counselingPreview" class="counseling-preview-box"></pre>
+        </div>
+
+        <button id="counselingSubmit" class="primary-button" type="button">AI 상담 전략 받기</button>
+
+        <div id="counselingLoading" class="counseling-loading hidden">AI가 상담 전략을 생성하는 중입니다...</div>
+        <div id="counselingError" class="counseling-error-box hidden"></div>
+        <div id="counselingResult" class="counseling-result-box hidden"></div>
+      </div>
+
+      <p class="counseling-disclaimer">
+        AI 상담 전략은 참고용입니다. 최종 판단과 실제 상담은 교사가 학생의 상황을 종합적으로 고려하여 진행해야 합니다.
+      </p>
+    </section>
   `;
 
   showOnly(adminView);
   logoutButton.classList.remove("hidden");
+  attachAdminEventListeners();
 }
 
-function renderStudentCard(student) {
-  return `
-    <article class="student-card">
-      <img class="student-photo" src="${student.photo}" alt="${student.name} 학생 사진" />
-      <div class="student-card-body">
-        <h3>${student.name}</h3>
-        <p class="student-number">학번 ${student.id}</p>
-        ${renderGrades(student.grades, true, `gradesTitle-${student.id}`)}
-        ${renderTraits(student)}
-      </div>
-    </article>
-  `;
+// adminView에 이벤트를 위임(delegation)하여 한 번만 등록합니다.
+function attachAdminEventListeners() {
+  if (adminListenersAttached) return;
+  adminListenersAttached = true;
+
+  adminView.addEventListener("click", (e) => {
+    const requestBtn = e.target.closest(".counseling-request-btn");
+    if (requestBtn) {
+      const index = parseInt(requestBtn.dataset.studentIndex, 10);
+      selectStudentForCounseling(index);
+      return;
+    }
+
+    if (e.target.id === "counselingSubmit") {
+      requestCounselingStrategy();
+    }
+  });
+
+  adminView.addEventListener("input", (e) => {
+    if (e.target.id === "teacherConcern") {
+      updateCounselingPreview();
+    }
+  });
 }
 
-function renderGrades(grades, compact = false, headingId = "gradesTitle") {
+function selectStudentForCounseling(index) {
+  const student = STUDENTS[index];
+  const alias = STUDENT_ALIASES[index];
+  selectedStudentForCounseling = { student, alias };
+
+  const emptyEl = adminView.querySelector("#counselingEmpty");
+  const contentEl = adminView.querySelector("#counselingContent");
+  const studentInfoEl = adminView.querySelector("#counselingStudentInfo");
+  const resultEl = adminView.querySelector("#counselingResult");
+  const errorEl = adminView.querySelector("#counselingError");
+  const loadingEl = adminView.querySelector("#counselingLoading");
+  const textareaEl = adminView.querySelector("#teacherConcern");
+
+  if (emptyEl) emptyEl.classList.add("hidden");
+  if (contentEl) contentEl.classList.remove("hidden");
+
+  if (studentInfoEl) {
+    studentInfoEl.innerHTML =
+      "<p><strong>선택된 학생:</strong> " +
+      student.name +
+      " (학번 " +
+      student.id +
+      ")</p>" +
+      "<p class=\"counseling-alias-note\">Gemini 전송 시 익명 호칭: <strong>" +
+      alias +
+      "</strong> &mdash; 이름·학번·사진 경로는 전송하지 않습니다.</p>";
+  }
+
+  if (resultEl) {
+    resultEl.textContent = "";
+    resultEl.classList.add("hidden");
+  }
+  if (errorEl) {
+    errorEl.textContent = "";
+    errorEl.classList.add("hidden");
+  }
+  if (loadingEl) loadingEl.classList.add("hidden");
+  if (textareaEl) textareaEl.value = "";
+
+  updateCounselingPreview();
+
+  const panel = adminView.querySelector(".counseling-panel");
+  if (panel) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function buildGradeSummary(grades) {
+  return Object.entries(grades)
+    .map(function (entry) { return entry[0] + ": " + entry[1]; })
+    .join(", ");
+}
+
+function buildLearningTraits(student) {
+  return student.traits.concat([student.teacherMemo]).join(" / ");
+}
+
+function updateCounselingPreview() {
+  if (!selectedStudentForCounseling) return;
+
+  const textareaEl = adminView.querySelector("#teacherConcern");
+  const previewEl = adminView.querySelector("#counselingPreview");
+  if (!previewEl) return;
+
+  const { student, alias } = selectedStudentForCounseling;
+  const payload = {
+    studentAlias: alias,
+    gradeSummary: buildGradeSummary(student.grades),
+    learningTraits: buildLearningTraits(student),
+    teacherConcern: (textareaEl && textareaEl.value.trim()) || "(아직 입력되지 않음)",
+  };
+
+  previewEl.textContent = JSON.stringify(payload, null, 2);
+}
+
+async function requestCounselingStrategy() {
+  if (!selectedStudentForCounseling) return;
+
+  const textareaEl = adminView.querySelector("#teacherConcern");
+  const submitBtn = adminView.querySelector("#counselingSubmit");
+  const loadingEl = adminView.querySelector("#counselingLoading");
+  const errorEl = adminView.querySelector("#counselingError");
+  const resultEl = adminView.querySelector("#counselingResult");
+
+  const teacherConcern = textareaEl ? textareaEl.value.trim() : "";
+
+  if (!teacherConcern) {
+    if (errorEl) {
+      errorEl.textContent = "상담 고민을 먼저 입력해주세요.";
+      errorEl.classList.remove("hidden");
+    }
+    return;
+  }
+
+  const { student, alias } = selectedStudentForCounseling;
+  const payload = {
+    studentAlias: alias,
+    gradeSummary: buildGradeSummary(student.grades),
+    learningTraits: buildLearningTraits(student),
+    teacherConcern: teacherConcern,
+  };
+
+  if (loadingEl) loadingEl.classList.remove("hidden");
+  if (errorEl) { errorEl.textContent = ""; errorEl.classList.add("hidden"); }
+  if (resultEl) { resultEl.textContent = ""; resultEl.classList.add("hidden"); }
+  if (submitBtn) submitBtn.disabled = true;
+
+  try {
+    // Gemini API 호출은 /api/gemini-counseling Vercel Serverless Function에서 처리합니다.
+    // 프론트엔드 코드에는 API 키를 절대 넣지 않습니다.
+    const response = await fetch("/api/gemini-counseling", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const data = await response.json();
+
+    if (data.success) {
+      if (resultEl) {
+        resultEl.textContent = data.result;
+        resultEl.classList.remove("hidden");
+      }
+    } else {
+      throw new Error(data.error || "알 수 없는 오류");
+    }
+  } catch (_err) {
+    if (errorEl) {
+      errorEl.textContent =
+        "AI 상담 전략을 불러오지 못했습니다. API 키 또는 Vercel 환경 변수를 확인해주세요.";
+      errorEl.classList.remove("hidden");
+    }
+  } finally {
+    if (loadingEl) loadingEl.classList.add("hidden");
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+function renderStudentCard(student, index) {
+  return (
+    '<article class="student-card">' +
+    '<img class="student-photo" src="' + student.photo + '" alt="' + student.name + ' 학생 사진" />' +
+    '<div class="student-card-body">' +
+    "<h3>" + student.name + "</h3>" +
+    '<p class="student-number">학번 ' + student.id + "</p>" +
+    renderGrades(student.grades, true, "gradesTitle-" + student.id) +
+    renderTraits(student) +
+    '<button class="counseling-request-btn ghost-button" data-student-index="' + index + '" type="button">상담 전략 요청</button>' +
+    "</div>" +
+    "</article>"
+  );
+}
+
+function renderGrades(grades, compact, headingId) {
+  if (headingId === undefined) headingId = "gradesTitle";
+  if (compact === undefined) compact = false;
+
   const rows = Object.entries(grades)
-    .map(([label, value]) => `<tr><th scope="row">${label}</th><td>${value}</td></tr>`)
+    .map(function (entry) {
+      return "<tr><th scope=\"row\">" + entry[0] + "</th><td>" + entry[1] + "</td></tr>";
+    })
     .join("");
 
-  return `
-    <section aria-labelledby="${headingId}">
-      <div class="section-title">
-        <h3 id="${headingId}">성적 정보</h3>
-      </div>
-      <table class="grade-table ${compact ? "compact-table" : ""}">
-        <tbody>${rows}</tbody>
-      </table>
-    </section>
-  `;
+  return (
+    '<section aria-labelledby="' + headingId + '">' +
+    '<div class="section-title">' +
+    '<h3 id="' + headingId + '">성적 정보</h3>' +
+    "</div>" +
+    '<table class="grade-table' + (compact ? " compact-table" : "") + '">' +
+    "<tbody>" + rows + "</tbody>" +
+    "</table>" +
+    "</section>"
+  );
 }
 
 function renderTraits(student) {
-  return `
-    <section aria-labelledby="traitsTitle-${student.id}">
-      <div class="section-title">
-        <h3 id="traitsTitle-${student.id}">학습 특성 및 교사 메모</h3>
-      </div>
-      <ul class="memo-list">
-        ${student.traits.map((trait) => `<li>${trait}</li>`).join("")}
-        <li>${student.teacherMemo}</li>
-      </ul>
-    </section>
-  `;
+  const items = student.traits.concat([student.teacherMemo])
+    .map(function (text) { return "<li>" + text + "</li>"; })
+    .join("");
+
+  return (
+    '<section aria-labelledby="traitsTitle-' + student.id + '">' +
+    '<div class="section-title">' +
+    '<h3 id="traitsTitle-' + student.id + '">학습 특성 및 교사 메모</h3>' +
+    "</div>" +
+    '<ul class="memo-list">' + items + "</ul>" +
+    "</section>"
+  );
 }
 
 showOnly(loginView);
