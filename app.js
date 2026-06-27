@@ -171,9 +171,15 @@ function renderAdminDashboard() {
 
     <section class="counseling-panel" aria-labelledby="counselingPanelTitle">
       <div class="counseling-panel-header">
-        <p class="eyebrow">AI Assistant</p>
-        <h3 id="counselingPanelTitle">AI 학생 상담 전략 도우미</h3>
-        <p class="counseling-panel-desc">학생 카드의 "상담 전략 요청" 버튼을 눌러 학생을 선택하세요.</p>
+        <div>
+          <p class="eyebrow">AI Assistant</p>
+          <h3 id="counselingPanelTitle">AI 학생 상담 전략 도우미</h3>
+          <p class="counseling-panel-desc">학생 카드의 "상담 전략 요청" 버튼을 눌러 학생을 선택하세요.</p>
+        </div>
+        <div class="counseling-api-status" id="counselingApiStatus" aria-live="polite">
+          <span class="api-status-dot" id="apiStatusDot" data-status="idle"></span>
+          <span id="apiStatusLabel" class="api-status-label">API 대기 중</span>
+        </div>
       </div>
 
       <div id="counselingEmpty" class="counseling-empty-msg">
@@ -314,6 +320,14 @@ function updateCounselingPreview() {
   previewEl.textContent = JSON.stringify(payload, null, 2);
 }
 
+function setApiStatus(status) {
+  const labels = { idle: "API 대기 중", connecting: "연결 중...", connected: "연결됨", error: "연결 실패" };
+  const dot = adminView.querySelector("#apiStatusDot");
+  const label = adminView.querySelector("#apiStatusLabel");
+  if (dot) dot.dataset.status = status;
+  if (label) label.textContent = labels[status] || "";
+}
+
 async function requestCounselingStrategy() {
   if (!selectedStudentForCounseling) return;
 
@@ -345,6 +359,7 @@ async function requestCounselingStrategy() {
   if (errorEl) { errorEl.textContent = ""; errorEl.classList.add("hidden"); }
   if (resultEl) { resultEl.textContent = ""; resultEl.classList.add("hidden"); }
   if (submitBtn) submitBtn.disabled = true;
+  setApiStatus("connecting");
 
   try {
     // Gemini API 호출은 /api/gemini-counseling Vercel Serverless Function에서 처리합니다.
@@ -358,6 +373,7 @@ async function requestCounselingStrategy() {
     const data = await response.json();
 
     if (data.success) {
+      setApiStatus("connected");
       if (resultEl) {
         resultEl.textContent = data.result;
         resultEl.classList.remove("hidden");
@@ -366,6 +382,7 @@ async function requestCounselingStrategy() {
       throw new Error(data.error || "알 수 없는 오류");
     }
   } catch (_err) {
+    setApiStatus("error");
     if (errorEl) {
       errorEl.textContent =
         "AI 상담 전략을 불러오지 못했습니다. API 키 또는 Vercel 환경 변수를 확인해주세요.";

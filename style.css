@@ -514,6 +514,10 @@ button {
 }
 
 .counseling-panel-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
   margin-bottom: 20px;
 }
 
@@ -526,6 +530,55 @@ button {
   margin: 0;
   color: var(--muted);
   font-size: 14px;
+}
+
+.counseling-api-status {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-shrink: 0;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.api-status-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  display: inline-block;
+  flex-shrink: 0;
+}
+
+.api-status-dot[data-status="idle"] {
+  background: #94a3b8;
+}
+
+.api-status-dot[data-status="connecting"] {
+  background: #f59e0b;
+  animation: api-status-pulse 0.8s ease-in-out infinite;
+}
+
+.api-status-dot[data-status="connected"] {
+  background: #22c55e;
+  animation: api-status-pulse 2.5s ease-in-out infinite;
+}
+
+.api-status-dot[data-status="error"] {
+  background: #ef4444;
+}
+
+.api-status-label {
+  color: var(--ink);
+}
+
+@keyframes api-status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.45; transform: scale(1.35); }
 }
 
 .counseling-empty-msg {
